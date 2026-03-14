@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/alexflint/go-arg"
+	"github.com/miekg/dns"
 	"github.com/remeh/sizedwaitgroup"
 )
 
@@ -17,7 +18,7 @@ import (
 type Args struct {
 	N              int      `arg:"-n,--num" help:"Number of latency replies to return (default: all)"`
 	T              int      `arg:"-t,--timeout" help:"Timeout in milliseconds to consider"`
-	Kind           string   `arg:"-k,--kind" help:"Test type: 'tcp' or 'ntp' (default: tcp)"`
+	Kind           string   `arg:"-k,--kind" help:"Test type: 'tcp', 'ntp', or 'dns' (default: tcp)"`
 	Bare           bool     `arg:"-b,--bare" help:"Only print the targets in the result, one per line"`
 	Targets        []string `arg:"positional" help:"TCP or NTP targets to test"`
 	Sort           bool     `arg:"-s,--sort" help:"Sort the list by latency"`
@@ -26,6 +27,7 @@ type Args struct {
 	Parallel       int      `arg:"-P,--parallel" help:"Number of concurrent allowed connections (default: 8)"`
 	TCPDefaultPort int      `arg:"-p,--tcp-port" help:"Default port for TCP targets"`
 	FilterSubnet   int      `arg:"-f,--filter-subnet" help:"Filter to one result per subnet (for example: 8 is /24)" default:"-1"`
+	DNSQuery       string   `arg:"--dns-query" help:"DNS query to make (default: \"yahoo.com\")" default:"yahoo.com"`
 }
 
 // NTP packet structure
@@ -93,6 +95,8 @@ func main() {
 					result = testTCP(target, args.T, fmt.Sprintf("%d", args.TCPDefaultPort))
 				case "ntp":
 					result = testNTP(target, args.T)
+				case "dns":
+					result = testDNS(target, args.T, args.DNSQuery)
 				default:
 					panic("unsupported protocol: " + args.Kind)
 				}
@@ -351,6 +355,100 @@ func testNTP(target string, timeoutMs int) Result {
 		Success:  true,
 		IP:       conn.RemoteAddr(),
 		Message:  "NTP query completed",
+	}
+}
+
+// testDNS performs a DNS lookup query
+func testDNS(target string, timeoutMs int, qryHost string) Result {
+	start := time.Now()
+	var latency time.Duration
+
+	// Parse host and port
+	host, port, err := parseTarget(target)
+	if err != nil {
+		return Result{
+			Target:   target,
+			Protocol: "DNS",
+			Latency:  0,
+			Success:  false,
+			Message:  err.Error(),
+		}
+	}
+
+	// Default DNS port is 53
+	if port == "" {
+		port = "53"
+	}
+
+	// Create timeout
+	timeout := time.Duration(timeoutMs) * time.Millisecond
+
+	// Create UDP address
+	addr := net.JoinHostPort(host, port)
+
+	// Create DNS client
+	client := new(dns.Client)
+	client.Timeout = timeout
+
+	// Create DNS question for A record lookup
+	msg := new(dns.Msg)
+	msg.SetQuestion(dns.Fqdn(qryHost), dns.TypeA)
+	msg.RecursionDesired = true
+
+	// Send DNS request and receive response
+	r, _, err := client.Exchange(msg, addr)
+	if err != nil {
+		latency = time.Since(start)
+		return Result{
+			Target:   target,
+			Protocol: "DNS",
+			Latency:  latency,
+			Success:  false,
+			Message:  err.Error(),
+		}
+	}
+
+	latency = time.Since(start)
+
+	// Check if we got any answers
+	if len(r.Answer) == 0 {
+		return Result{
+			Target:   target,
+			Protocol: "DNS",
+			Latency:  latency,
+			Success:  false,
+			Message:  "No answers received",
+		}
+	}
+
+	// Get the first IP address
+	var firstIP string
+	for _, ans := range r.Answer {
+		if a, ok := ans.(*dns.A); ok {
+			if a.A != nil {
+				firstIP = a.A.String()
+				break
+			}
+		}
+	}
+
+	if firstIP == "" {
+		return Result{
+			Target:   target,
+			Protocol: "DNS",
+			Latency:  latency,
+			Success:  false,
+			Message:  "No A records found",
+		}
+	}
+
+	return Result{
+		Target:   target,
+		Protocol: "DNS",
+		Latency:  latency,
+		Success:  true,
+		IP:       &net.UDPAddr{IP: net.ParseIP(firstIP), Port: 53},
+		Message:  fmt.Sprintf("DNS lookup successful, found %d IP(s)", len(r.Answer)),
 	}
 }
 

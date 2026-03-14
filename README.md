@@ -1,12 +1,13 @@
 # Latency Tester
 
-A fast, concurrent TCP/NTP latency tester for testing multiple targets. Uses SYN-only for TCP and full NTP handshake for time servers.
+A fast, concurrent TCP/NTP/DNS latency tester for testing multiple targets. Uses SYN-only for TCP, full NTP handshake for time servers, and DNS queries for domain resolution.
 
 ## Features
 
 - **Concurrent testing**: Test multiple targets in parallel with configurable concurrency
 - **TCP testing**: Connects with SYN, immediately closes connection
 - **NTP testing**: Full NTP protocol query with time synchronization
+- **DNS testing**: Perform DNS queries to resolve domain names and measure resolution latency
 - **Flexible output**: Configurable output styles (table, bare/raw)
 - **Raw output**: Use `-b,--bare` for one target per line output
 - **Configurable results**: Specify number of lowest latency responses (-n)
@@ -28,13 +29,13 @@ make build
 
 - `-n,--num <number>`: Number of lowest latency replies to return (default: all)
 - `-t <milliseconds>`: Timeout in milliseconds to consider (default: 5000)
-- `-k <kind>`: Test type: 'tcp' or 'ntp' (tcp by default, or auto-detect based on hostname)
+- `-k <kind>`: Test type: 'tcp', 'ntp', or 'dns' (tcp by default, or auto-detect based on hostname)
 - `-b,--bare`: Only print target names in result, one per line (raw output)
 - `-s,--sort`: Sort the list by latency
 - `-r,--reverse`: Reverse the list (useful with sorting the results)
 - `-p,--parallel <number>`: Number of concurrent allowed connections (default: 8)
 - `-V,--version`: Print version and exit
-- `targets`: TCP or NTP target URLs (host or host:port)
+- `targets`: TCP, NTP, or DNS target URLs (host or host:port)
 
 ### Examples
 
@@ -65,6 +66,12 @@ make build
 
 # Test NTP servers specifically
 ./ltest -k ntp ntp.example.net time.google.com
+
+# Test DNS resolution latency
+./ltest -k dns google.com github.com example.com
+
+# Test DNS with custom timeout (2 seconds)
+./ltest -k dns -t 2000 google.com github.com example.com
 
 # Print version
 ./ltest -V
@@ -103,6 +110,18 @@ time.google.com:80
 - Sends NTP request packet (mode 3 = client)
 - Waits for NTP response with time information
 - Full handshake with server time synchronization
+
+### DNS
+- Uses UDP protocol to query DNS servers
+- Performs DNS lookup queries using system's default resolver
+- Measures time from query start to response receipt
+- Returns the first IP address found and total number of IPs resolved
+
+### DNS
+- Uses DNS resolution with the system's default resolver
+- Queries DNS servers to resolve domain names
+- Measures time from query start to response receipt
+- Returns first IP address from the DNS response
 
 ## Building
 
