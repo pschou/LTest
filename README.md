@@ -1,0 +1,134 @@
+# Latency Tester
+
+A fast, concurrent TCP/NTP latency tester for testing multiple targets. Uses SYN-only for TCP and full NTP handshake for time servers.
+
+## Features
+
+- **Concurrent testing**: Test multiple targets in parallel with configurable concurrency
+- **TCP testing**: Connects with SYN, immediately closes connection
+- **NTP testing**: Full NTP protocol query with time synchronization
+- **Flexible output**: Configurable output styles (table, bare/raw)
+- **Raw output**: Use `-b,--bare` for one target per line output
+- **Configurable results**: Specify number of lowest latency responses (-n)
+- **Configurable timeout**: Set timeout in milliseconds (-t)
+
+## Installation
+
+```bash
+make build
+```
+
+## Usage
+
+```bash
+./ltest google.com:80 github.com:80
+```
+
+### Arguments
+
+- `-n,--num <number>`: Number of lowest latency replies to return (default: all)
+- `-t <milliseconds>`: Timeout in milliseconds to consider (default: 5000)
+- `-k <kind>`: Test type: 'tcp' or 'ntp' (tcp by default, or auto-detect based on hostname)
+- `-b,--bare`: Only print target names in result, one per line (raw output)
+- `-s,--sort`: Sort the list by latency
+- `-r,--reverse`: Reverse the list (useful with sorting the results)
+- `-p,--parallel <number>`: Number of concurrent allowed connections (default: 8)
+- `-V,--version`: Print version and exit
+- `targets`: TCP or NTP target URLs (host or host:port)
+
+### Examples
+
+```bash
+# Test TCP targets, show all results
+./ltest google.com:80 github.com:80
+
+# Test TCP targets, show 5 lowest latencies
+./ltest -n 5 google.com:80 github.com:80
+
+# Test with custom timeout (3 seconds)
+./ltest -t 3000 ntp.example.net google.com:80
+
+# Test a single TCP target
+./ltest 192.168.1.1:80
+
+# Raw output: just target names one per line
+./ltest -b -n 5 example.net:80 google.com:80 time.google.com:80
+
+# Sort results by latency and show all
+./ltest -s example.net:80 google.com:80 github.com:80
+
+# Reverse sort (slowest first)
+./ltest -r -s ntp.example.net google.com:80 github.com:80
+
+# Test with high parallelism (20 concurrent connections)
+./ltest -k ntp -p 20 ntp.example.net time.google.com time.cloudflare.com
+
+# Test NTP servers specifically
+./ltest -k ntp ntp.example.net time.google.com
+
+# Print version
+./ltest -V
+```
+
+## Output Formats
+
+### Default (Table)
+```
+Results:
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Target                    │ Protocol │  Latency │ Success │ Details                                  │
+├──────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ntp.example.net:80        │ TCP      │  45.23ms │ true    │ NTP query completed                      │
+│ google.com:80             │ TCP      │ 123.45ms │ true    │ SYN sent and acknowledged                 │
+│ time.google.com:80        │ TCP      │ 156.78ms │ true    │ NTP query completed                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Bare (One per line)
+```
+ntp.example.net:80
+google.com:80
+time.google.com:80
+```
+
+## Protocol Details
+
+### TCP
+- Uses `net.Dial` with TCP protocol
+- Establishes connection, immediately closes it
+- Measures time from SYN sent to SYN/ACK received
+
+### NTP
+- Uses UDP protocol on port 123
+- Sends NTP request packet (mode 3 = client)
+- Waits for NTP response with time information
+- Full handshake with server time synchronization
+
+## Building
+
+```bash
+# Build for current platform
+make build
+
+# Build with version info
+make build
+
+# Build for multiple platforms
+make build-all
+
+# Build without debug info
+make build
+```
+
+## Development
+
+```bash
+# Install dependencies
+make deps
+
+# Run tests
+make test
+
+# Clean build artifacts
+make clean
+```
