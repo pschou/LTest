@@ -1,0 +1,103 @@
+package main
+
+import (
+	"fmt"
+	"net"
+	"time"
+
+	"github.com/miekg/dns"
+)
+
+// testDNS performs a DNS lookup query
+func testDNS(target string, timeoutMs int, qryHost string) Result {
+	start := time.Now()
+	var latency time.Duration
+
+	// Parse host and port
+	host, port, err := parseTarget(target)
+	if err != nil {
+		return Result{
+			Target:   target,
+			Protocol: "DNS",
+			Latency:  0,
+			Success:  false,
+			Message:  err.Error(),
+		}
+	}
+
+	// Default DNS port is 53
+	if port == "" {
+		port = "53"
+	}
+
+	// Create timeout
+	timeout := time.Duration(timeoutMs) * time.Millisecond
+
+	// Create UDP address
+	addr := net.JoinHostPort(host, port)
+
+	// Create DNS client
+	client := new(dns.Client)
+	client.Timeout = timeout
+
+	// Create DNS question for A record lookup
+	msg := new(dns.Msg)
+	msg.SetQuestion(dns.Fqdn(qryHost), dns.TypeA)
+	msg.RecursionDesired = true
+
+	// Send DNS request and receive response
+	r, _, err := client.Exchange(msg, addr)
+	if err != nil {
+		latency = time.Since(start)
+		return Result{
+			Target:   target,
+			Protocol: "DNS",
+			Latency:  latency,
+			Success:  false,
+			Message:  err.Error(),
+		}
+	}
+
+	latency = time.Since(start)
+
+	// Check if we got any answers
+	if len(r.Answer) == 0 {
+		return Result{
+			Target:   target,
+			Protocol: "DNS",
+			Latency:  latency,
+			Success:  false,
+			Message:  "No answers received",
+		}
+	}
+
+	// Get the first IP address
+	var firstIP string
+	for _, ans := range r.Answer {
+		if a, ok := ans.(*dns.A); ok {
+			if a.A != nil {
+				firstIP = a.A.String()
+				break
+			}
+		}
+	}
+
+	if firstIP == "" {
+		return Result{
+			Target:   target,
+			Protocol: "DNS",
+			Latency:  latency,
+			Success:  false,
+			Message:  "No A records found",
+		}
+	}
+
+	return Result{
+		Target:   target,
+		Protocol: "DNS",
+		Latency:  latency,
+		Success:  true,
+		IP:       &net.UDPAddr{IP: net.ParseIP(firstIP), Port: 53},
+		Message:  fmt.Sprintf("DNS lookup successful, found %d IP(s)", len(r.Answer)),
+	}
+}
