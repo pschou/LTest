@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -16,15 +15,17 @@ import (
 
 // Arguments for the CLI tool
 type Args struct {
-	N        int      `arg:"-n,--num" help:"Number of lowest latency replies to return (default: all)"`
-	T        int      `arg:"-t,--timeout" help:"Timeout in milliseconds to consider"`
-	Kind     string   `arg:"-k,--kind" help:"Test type: 'tcp' or 'ntp' (default: tcp)"`
-	Bare     bool     `arg:"-b,--bare" help:"Only print the targets in the result, one per line"`
-	Targets  []string `arg:"positional" help:"TCP or NTP targets to test"`
-	Sort     bool     `arg:"-s,--sort" help:"Sort the list by latency"`
-	Reverse  bool     `arg:"-r,--reverse" help:"Reverse the list (useful with sorting the results)"`
-	Version  bool     `arg:"-V,--version" help:"Print version and exit"`
-	Parallel int      `arg:"-p,--parallel" help:"Number of concurrent allowed connections (default: 8)`
+	N              int      `arg:"-n,--num" help:"Number of latency replies to return (default: all)"`
+	T              int      `arg:"-t,--timeout" help:"Timeout in milliseconds to consider"`
+	Kind           string   `arg:"-k,--kind" help:"Test type: 'tcp' or 'ntp' (default: tcp)"`
+	Bare           bool     `arg:"-b,--bare" help:"Only print the targets in the result, one per line"`
+	Targets        []string `arg:"positional" help:"TCP or NTP targets to test"`
+	Sort           bool     `arg:"-s,--sort" help:"Sort the list by latency"`
+	Reverse        bool     `arg:"-r,--reverse" help:"Reverse the list (useful with sorting the results)"`
+	Version        bool     `arg:"-V,--version" help:"Print version and exit"`
+	Parallel       int      `arg:"-P,--parallel" help:"Number of concurrent allowed connections (default: 8)"`
+	TCPDefaultPort int      `arg:"-p,--tcp-port" help:"Default port for TCP targets"`
+	FilterSubnet   int      `arg:"-f,--filter-subnet" help:"Filter to one result per subnet (for example: 8 is /24)" default:"-1"`
 }
 
 // NTP packet structure
@@ -57,7 +58,7 @@ func main() {
 
 	// Set defaults
 	if args.N <= 0 {
-		args.N = -1 // Indicate "not specified"
+		args.N = len(args.Targets) // not specified
 	}
 	if args.T <= 0 {
 		args.T = 5000 // 5 seconds default
@@ -68,96 +69,118 @@ func main() {
 	}
 
 	if len(args.Targets) == 0 {
-		fmt.Println("No targets specified")
+		fmt.Fprintln(os.Stderr, "No targets specified")
 		os.Exit(1)
 	}
 
 	// Run tests
-	results := make([]*Result, len(args.Targets))
+	results := make(chan *Result)
+	printer := results
 
-	// Allow only concurrent routines
-	swg := sizedwaitgroup.New(args.Parallel)
-	for i, target := range args.Targets {
-		swg.Add()
-		go func(i int) {
-			defer swg.Done()
-			var result Result
+	// Collect data
+	go func() {
+		defer close(results)
+		// Allow only concurrent routines
+		swg := sizedwaitgroup.New(args.Parallel)
+		for i, target := range args.Targets {
+			swg.Add()
+			go func(i int) {
+				defer swg.Done()
+				var result Result
 
-			switch args.Kind {
-			case "tcp", "":
-				result = testTCP(target, args.T)
-			case "ntp":
-				result = testNTP(target, args.T)
-			default:
-				panic("unsupported protocol: " + args.Kind)
-			}
+				switch args.Kind {
+				case "tcp", "":
+					result = testTCP(target, args.T, fmt.Sprintf("%d", args.TCPDefaultPort))
+				case "ntp":
+					result = testNTP(target, args.T)
+				default:
+					panic("unsupported protocol: " + args.Kind)
+				}
 
-			results[i] = &result
-		}(i)
-	}
-	swg.Wait()
-
-	// Set default for -n if not specified
-	if args.N < 0 {
-		args.N = len(results)
-	}
+				results <- &result
+			}(i)
+		}
+		swg.Wait()
+	}()
 
 	if args.Sort {
-		// Sort by latency
-		sort.Slice(results, func(i, j int) bool {
-			if results[i].Success && results[j].Success {
-				return results[i].Latency < results[j].Latency
+		printer = make(chan *Result)
+		go func() {
+			defer close(printer)
+
+			// Collect results
+			var allResults []*Result
+			for r := range results {
+				allResults = append(allResults, r)
 			}
-			if results[i].Success {
-				return true
+
+			// Sort by latency
+			sort.Slice(allResults, func(i, j int) bool {
+				if allResults[i].Success == allResults[j].Success {
+					return (allResults[i].Latency < allResults[j].Latency) != args.Reverse
+				}
+				return allResults[i].Success
+			})
+
+			for _, r := range allResults {
+				printer <- r
 			}
-			if results[j].Success {
-				return false
-			}
-			return results[i].Latency < results[j].Latency
-		})
+		}()
 	}
 
-	if args.Reverse {
-		slices.Reverse(results)
-	}
+	var dedup = make(map[string]struct{})
 
 	if args.Bare {
-		for i := 0; i < min(args.N, len(results)); i++ {
-			if results[i].Success {
-				fmt.Println(results[i].Target)
+		i := 0
+		for r := range printer {
+			if i == args.N {
+				break
+			}
+			if r.Success {
+				baseAddr := getBaseAddress(r.IP, args.FilterSubnet)
+				if _, ok := dedup[baseAddr]; !ok {
+					if args.FilterSubnet >= 0 {
+						dedup[baseAddr] = struct{}{}
+					}
+					i++
+					fmt.Println(r.Target)
+				}
 			}
 		}
 	} else {
 		// Print results
-		fmt.Println("\nResults:")
-		fmt.Println("┌──────────────────────────────────────────────────────────────────────────────────────────────────────┐")
-		fmt.Println("│ Target                    │ Protocol │  Latency │ Success │ Details                                  │")
-		fmt.Println("├──────────────────────────────────────────────────────────────────────────────────────────────────────┤")
+		fmt.Println("┌───────────────────────────────────────────────────────────────────────────────────────────────────────┐")
+		fmt.Println("│ Target                    │ Protocol │  Latency  │ Success │ Details                                  │")
+		fmt.Println("├───────────────────────────────────────────────────────────────────────────────────────────────────────┤")
 
-		for i := 0; i < min(args.N, len(results)); i++ {
-			t := results[i].Latency.Seconds() * 1000
-			//if !results[i].Success {
-			//	t = math.NaN()
-			//}
-			fmt.Printf("│ %-25s │ %-8s │ %-8s │ %-7s │ %-40s │\n",
-				results[i].Target,
-				results[i].Protocol,
-				fmt.Sprintf("% 5.2fms", t),
-				fmt.Sprintf("%v", results[i].Success),
-				strings.ReplaceAll(results[i].Message, results[i].Target, ""))
+		i := 0
+		for r := range printer {
+			if i == args.N {
+				fmt.Printf("│ %-25s │ %-8s │ %-9s │ %-7s │ % 19d more results omitted │\n",
+					"",
+					"",
+					"",
+					"",
+					len(args.Targets)-args.N)
+				break
+			}
+			baseAddr := getBaseAddress(r.IP, args.FilterSubnet)
+			if _, ok := dedup[baseAddr]; !ok {
+				if args.FilterSubnet >= 0 {
+					dedup[baseAddr] = struct{}{}
+				}
+				i++
+				fmt.Printf("│ %-25s │ %-8s │ %-9s │ %-7s │ %-40s │\n",
+					r.Target,
+					r.Protocol,
+					fmt.Sprintf("%3.2fms", r.Latency.Seconds()*1000),
+					fmt.Sprintf("%v", r.Success),
+					strings.ReplaceAll(r.Message, r.Target, ""))
+			}
+
 		}
 
-		if len(results) > args.N {
-			fmt.Printf("│ %-26s │ %-8s │ %-8s │ %-8s │ %d more results omitted │\n",
-				"",
-				"",
-				"",
-				"",
-				len(results)-args.N)
-		}
-
-		fmt.Println("└──────────────────────────────────────────────────────────────────────────────────────────────────────┘")
+		fmt.Println("└───────────────────────────────────────────────────────────────────────────────────────────────────────┘")
 	}
 }
 
@@ -168,15 +191,16 @@ type Result struct {
 	Latency  time.Duration
 	Success  bool
 	Message  string
+	IP       net.Addr
 }
 
 // testTCP tests a TCP target with a SYN-only handshake
-func testTCP(target string, timeoutMs int) Result {
+func testTCP(target string, timeoutMs int, defaultPort string) Result {
 	start := time.Now()
 	var latency time.Duration
 
 	// Parse host:port
-	host, port, err := parseTarget(target)
+	host, portStr, err := parseTarget(target)
 	if err != nil {
 		return Result{
 			Target:   target,
@@ -185,6 +209,11 @@ func testTCP(target string, timeoutMs int) Result {
 			Success:  false,
 			Message:  err.Error(),
 		}
+	}
+
+	// If port is not specified, use the default TCP port from args
+	if portStr == "" && defaultPort != "" {
+		portStr = defaultPort
 	}
 
 	// Convert timeout to seconds
@@ -196,7 +225,7 @@ func testTCP(target string, timeoutMs int) Result {
 	}
 
 	// Connect to target
-	conn, err := dialer.Dial("tcp", net.JoinHostPort(host, port))
+	conn, err := dialer.Dial("tcp", net.JoinHostPort(host, portStr))
 	if err != nil {
 		latency = time.Since(start)
 		return Result{
@@ -213,6 +242,7 @@ func testTCP(target string, timeoutMs int) Result {
 
 	return Result{
 		Target:   target,
+		IP:       conn.RemoteAddr(),
 		Protocol: "TCP",
 		Latency:  latency,
 		Success:  true,
@@ -319,6 +349,7 @@ func testNTP(target string, timeoutMs int) Result {
 		Protocol: "NTP",
 		Latency:  latency,
 		Success:  true,
+		IP:       conn.RemoteAddr(),
 		Message:  "NTP query completed",
 	}
 }
@@ -353,10 +384,28 @@ func parseTarget(target string) (string, string, error) {
 	return target, "", nil
 }
 
-// min returns the smaller of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
+func getBaseAddress(addr net.Addr, trimBits int) string {
+	var ip net.IP
+
+	switch v := addr.(type) {
+	case *net.IPAddr:
+		ip = v.IP
+	case *net.TCPAddr:
+		ip = v.IP
+	case *net.UDPAddr:
+		ip = v.IP
+	default:
+		return ""
 	}
-	return b
+
+	if ip == nil || trimBits < 0 {
+		return ""
+	}
+
+	mask := net.CIDRMask(len(ip)*8-trimBits, len(ip)*8)
+	baseIP := make(net.IP, len(ip))
+	for i := range ip {
+		baseIP[i] = ip[i] & mask[i]
+	}
+	return baseIP.String()
 }
