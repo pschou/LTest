@@ -1,6 +1,6 @@
 # Latency Tester
 
-A fast, concurrent TCP/NTP/DNS latency tester for testing multiple targets. Uses SYN-only for TCP, full NTP handshake for time servers, and DNS queries for domain resolution.
+A fast, concurrent TCP/NTP/DNS/ICMP latency tester for testing multiple targets. Uses SYN-only for TCP, full NTP handshake for time servers, DNS queries for domain resolution, and ICMP ping for network latency. Designed to help administrators pick the nearest servers from a list.
 
 ## Features
 
@@ -8,6 +8,7 @@ A fast, concurrent TCP/NTP/DNS latency tester for testing multiple targets. Uses
 - **TCP testing**: Connects with SYN, immediately closes connection
 - **NTP testing**: Full NTP protocol query with time synchronization
 - **DNS testing**: Perform DNS queries to resolve domain names and measure resolution latency
+- **ICMP testing**: Send ICMP echo requests (ping) to measure network latency
 - **Flexible output**: Configurable output styles (table, bare/raw)
 - **Raw output**: Use `-b,--bare` for one target per line output
 - **Configurable results**: Specify number of lowest latency responses (-n)
@@ -113,15 +114,12 @@ time.google.com:80
 
 ### DNS
 - Uses UDP protocol to query DNS servers
-- Performs DNS lookup queries using system's default resolver
-- Measures time from query start to response receipt
-- Returns the first IP address found and total number of IPs resolved
-
-### DNS
-- Uses DNS resolution with the system's default resolver
 - Queries DNS servers to resolve domain names
 - Measures time from query start to response receipt
-- Returns first IP address from the DNS response
+
+### ICMP
+- Sends two ICMP echo requests to each target
+- Measures the round trip times and keeps the shortest
 
 ## Building
 
