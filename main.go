@@ -19,7 +19,7 @@ import (
 type Args struct {
 	Num          uint     `arg:"-n,--num" help:"Number of latency replies to return [default: all]"`
 	Timeout      int      `arg:"-t,--timeout" help:"Timeout in milliseconds to consider"`
-	Kind         string   `arg:"-k,--kind" help:"Test type: 'tcp', 'ntp', 'dns', or 'icmp'\n\tOthers like 'http', 'https', and 'ssh' will set 'tcp' and the port if not specified" default:"tcp"`
+	Kind         string   `arg:"-k,--kind" help:"Protocol: tcp, ntp, dns, icmp, or #/tcp in /etc/services" default:"tcp"`
 	Bare         bool     `arg:"-b,--bare" help:"Only print the targets in the result, one per line"`
 	Targets      []string `arg:"positional" help:"Host targets to test (\"host:port\" or \"host\" if icmp)"`
 	Sort         bool     `arg:"-s,--sort" help:"Sort the list by latency"`
