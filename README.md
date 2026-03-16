@@ -38,8 +38,7 @@ Options:
   --num NUM, -n NUM      Number of latency replies to return [default: all]
   --timeout TIMEOUT, -t TIMEOUT
                          Timeout in milliseconds to consider
-  --kind KIND, -k KIND   Test type: 'tcp', 'ntp', 'dns', or 'icmp'
-	Others like 'http', 'https', and 'ssh' will set 'tcp' and the port if not specified [default: tcp]
+  --kind KIND, -k KIND   Protocol: tcp, ntp, dns, icmp, or #/tcp in /etc/services [default: tcp]
   --bare, -b             Only print the targets in the result, one per line
   --sort, -s             Sort the list by latency
   --reverse, -r          Reverse the list (useful with sorting the results)
