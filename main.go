@@ -6,7 +6,9 @@ import (
 	"net"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alexflint/go-arg"
@@ -15,18 +17,18 @@ import (
 
 // Arguments for the CLI tool
 type Args struct {
-	Num            int      `arg:"-n,--num" help:"Number of latency replies to return [default: all]"`
-	Timeout        int      `arg:"-t,--timeout" help:"Timeout in milliseconds to consider"`
-	Kind           string   `arg:"-k,--kind" help:"Test type: 'tcp', 'ntp', 'dns', or 'icmp'" default:"tcp"`
-	Bare           bool     `arg:"-b,--bare" help:"Only print the targets in the result, one per line"`
-	Targets        []string `arg:"positional" help:"TCP or NTP targets to test"`
-	Sort           bool     `arg:"-s,--sort" help:"Sort the list by latency"`
-	Reverse        bool     `arg:"-r,--reverse" help:"Reverse the list (useful with sorting the results)"`
-	Version        bool     `arg:"-V,--version" help:"Print version and exit"`
-	Parallel       int      `arg:"-P,--parallel" help:"Number of concurrent allowed connections" default:"8"`
-	TCPDefaultPort int      `arg:"-p,--tcp-port" help:"Default port for TCP targets"`
-	FilterSubnet   int      `arg:"-f,--filter-subnet" help:"Filter to one result per subnet (8 = /24)" default:"-1"`
-	DNSQuery       string   `arg:"--dns-query" help:"DNS query to make" default:"yahoo.com"`
+	Num          uint     `arg:"-n,--num" help:"Number of latency replies to return [default: all]"`
+	Timeout      int      `arg:"-t,--timeout" help:"Timeout in milliseconds to consider"`
+	Kind         string   `arg:"-k,--kind" help:"Test type: 'tcp', 'ntp', 'dns', or 'icmp'\n\tOthers like 'http', 'https', and 'ssh' will set 'tcp' and the port if not specified" default:"tcp"`
+	Bare         bool     `arg:"-b,--bare" help:"Only print the targets in the result, one per line"`
+	Targets      []string `arg:"positional" help:"Host targets to test (\"host:port\" or \"host\" if icmp)"`
+	Sort         bool     `arg:"-s,--sort" help:"Sort the list by latency"`
+	Reverse      bool     `arg:"-r,--reverse" help:"Reverse the list (useful with sorting the results)"`
+	Version      bool     `arg:"-V,--version" help:"Print version and exit"`
+	Parallel     int      `arg:"-P,--parallel" help:"Number of concurrent allowed connections" default:"8"`
+	CustomPort   *uint16  `arg:"-p,--port" help:"Custom port to scan (if not specified in the target)"`
+	FilterSubnet *uint8   `arg:"-f,--filter-subnet" help:"Filter to one result per subnet (8 = /24)"`
+	DNSQuery     string   `arg:"--dns-query" help:"DNS query to make" default:"github.com"`
 }
 
 // NTP packet structure
@@ -58,11 +60,32 @@ func main() {
 	}
 
 	// Set defaults
-	if args.Num <= 0 {
-		args.Num = len(args.Targets) // not specified
+	if args.Num == 0 {
+		args.Num = uint(len(args.Targets)) // not specified or invalid request
 	}
 	if args.Timeout <= 0 {
 		args.Timeout = 5000 // 5 seconds default
+	}
+
+	switch args.Kind = strings.ToLower(args.Kind); args.Kind {
+	case "icmp", "ping":
+		if args.CustomPort != nil {
+			fmt.Fprintln(os.Stderr, "Latency Tester: Invalid port specification for ICMP")
+			os.Exit(1)
+		}
+	case "tcp", "", "ntp", "dns":
+	default:
+		tcpPort := getServicePort(args.Kind)
+		if n, err := strconv.ParseUint(tcpPort, 10, 16); n > 0 && err == nil {
+			args.Kind = "tcp"
+			if args.CustomPort == nil {
+				httpPort := uint16(n)
+				args.CustomPort = &httpPort
+			}
+		} else {
+			fmt.Fprintln(os.Stderr, "Latency Tester: Kind not supported or not found in /etc/services: ", args.Kind)
+			os.Exit(1)
+		}
 	}
 
 	if args.Parallel <= 0 {
@@ -70,23 +93,41 @@ func main() {
 	}
 
 	if len(args.Targets) == 0 {
-		fmt.Fprintln(os.Stderr, "No targets specified")
-		os.Exit(1)
+		if !args.Bare {
+			fmt.Fprintln(os.Stderr, "Latency Tester: No targets specified")
+			os.Exit(1)
+		}
+		os.Exit(0)
 	}
 
 	// Run tests
 	results := make(chan *Result)
 	printer := results
+	ctx, cancel := context.WithCancel(context.Background())
 
 	// Collect data
 	go func() {
-		defer close(results)
+		var (
+			chanClosed bool
+			chanLock   sync.Mutex
+		)
+		defer func() {
+			chanLock.Lock()
+			defer chanLock.Unlock()
+			chanClosed = true
+			close(results)
+		}()
 
-		var dedup = make(map[string]struct{})
+		var shrinktTimeoutWindowIPFilter = make(map[string]struct{})
+		var customPort string
+		if args.CustomPort != nil {
+			customPort = fmt.Sprintf("%d", *args.CustomPort)
+		}
 
-		// Allow only concurrent routines
-		tk := topk.New(context.Background(), args.Parallel, args.Num,
+		// Allow only Num concurrent routines
+		tk := topk.New(ctx, args.Parallel, int(args.Num),
 			time.Duration(args.Timeout)*time.Millisecond*2+time.Second)
+
 		for i, target := range args.Targets {
 			ctx, Done := tk.Add()
 
@@ -95,28 +136,34 @@ func main() {
 
 				switch args.Kind {
 				case "tcp", "":
-					result = testTCP(ctx, target, args.Timeout, fmt.Sprintf("%d", args.TCPDefaultPort))
+					result = testTCP(ctx, target, args.Timeout, customPort)
 				case "ntp":
-					result = testNTP(ctx, target, args.Timeout)
+					result = testNTP(ctx, target, args.Timeout, customPort)
 				case "dns":
-					result = testDNS(ctx, target, args.Timeout, args.DNSQuery)
+					result = testDNS(ctx, target, args.Timeout, args.DNSQuery, customPort)
 				case "icmp", "ping":
 					result = testICMP(ctx, target, args.Timeout)
-				default:
-					panic("unsupported protocol: " + args.Kind)
 				}
 
-				baseAddr := getBaseAddress(result.IP, args.FilterSubnet)
-				if _, ok := dedup[baseAddr]; !ok && result.Success {
-					if args.FilterSubnet >= 0 && baseAddr != "" {
-						dedup[baseAddr] = struct{}{}
+				if args.FilterSubnet != nil {
+					baseAddr := getBaseAddress(result.IP, *args.FilterSubnet)
+					if _, ok := shrinktTimeoutWindowIPFilter[baseAddr]; !ok && result.Success {
+						if baseAddr != "" {
+							shrinktTimeoutWindowIPFilter[baseAddr] = struct{}{}
+						}
+						Done(true)
+					} else {
+						Done(false) // Ignore second hits in the filtering efforts, as we don't want to shrink the timeout window too soon.
 					}
-					Done(true)
 				} else {
 					Done(result.Success)
 				}
 
-				results <- &result
+				chanLock.Lock()
+				defer chanLock.Unlock()
+				if !chanClosed {
+					results <- &result
+				}
 			}(i)
 		}
 		tk.Wait()
@@ -147,23 +194,33 @@ func main() {
 		}()
 	}
 
-	var dedup = make(map[string]struct{})
+	var subnetIPFilter = make(map[string]struct{})
+	toPrint := func(r *Result) bool {
+		if args.FilterSubnet == nil {
+			return true
+		}
+		baseAddr := getBaseAddress(r.IP, *args.FilterSubnet)
+		if _, ok := subnetIPFilter[baseAddr]; !ok {
+			if baseAddr != "" {
+				subnetIPFilter[baseAddr] = struct{}{}
+			}
+			return true
+		}
+		return false
+	}
 
 	if args.Bare {
 		i := 0
 		for r := range printer {
-			if i == args.Num {
-				break
-			}
 			if r.Success {
-				baseAddr := getBaseAddress(r.IP, args.FilterSubnet)
-				if _, ok := dedup[baseAddr]; !ok {
-					if args.FilterSubnet >= 0 && baseAddr != "" {
-						dedup[baseAddr] = struct{}{}
-					}
+				if toPrint(r) {
 					i++
 					fmt.Println(r.Target)
 				}
+			}
+			if i == int(args.Num) {
+				cancel()
+				break
 			}
 		}
 	} else {
@@ -174,20 +231,8 @@ func main() {
 
 		i := 0
 		for r := range printer {
-			if i == args.Num {
-				fmt.Printf("│ %-25s │ %-8s │ %-9s │ %-7s │ % 19d more results omitted │\n",
-					"",
-					"",
-					"",
-					"",
-					len(args.Targets)-args.Num)
-				break
-			}
-			baseAddr := getBaseAddress(r.IP, args.FilterSubnet)
-			if _, ok := dedup[baseAddr]; !ok {
-				if args.FilterSubnet >= 0 && baseAddr != "" {
-					dedup[baseAddr] = struct{}{}
-				}
+
+			if toPrint(r) {
 				i++
 				fmt.Printf("│ %-25s │ %-8s │ %-9s │ %-7s │ %-40s │\n",
 					r.Target,
@@ -196,7 +241,16 @@ func main() {
 					fmt.Sprintf("%v", r.Success),
 					strings.ReplaceAll(r.Message, r.Target, ""))
 			}
-
+			if i == int(args.Num) && len(args.Targets) > i {
+				cancel()
+				fmt.Printf("│ %-25s │ %-8s │ %-9s │ %-7s │ % 19d more results omitted │\n",
+					"",
+					"",
+					"",
+					"",
+					len(args.Targets)-i)
+				break
+			}
 		}
 
 		fmt.Println("└───────────────────────────────────────────────────────────────────────────────────────────────────────┘")

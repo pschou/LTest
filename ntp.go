@@ -8,7 +8,7 @@ import (
 )
 
 // testNTP performs a full NTP query with time synchronization
-func testNTP(ctx context.Context, target string, timeoutMs int) Result {
+func testNTP(ctx context.Context, target string, timeoutMs int, customPort string) Result {
 	start := time.Now()
 
 	var latency time.Duration
@@ -27,7 +27,11 @@ func testNTP(ctx context.Context, target string, timeoutMs int) Result {
 
 	// Default NTP port is 123
 	if port == "" {
-		port = "123"
+		if customPort != "" {
+			port = customPort
+		} else {
+			port = "123"
+		}
 	}
 
 	// Create UDP address

@@ -19,7 +19,7 @@ func parseTarget(target string) (string, string, error) {
 	return target, "", nil
 }
 
-func getBaseAddress(addr net.Addr, trimBits int) string {
+func getBaseAddress(addr net.Addr, trimBits uint8) string {
 	var ip net.IP
 
 	switch v := addr.(type) {
@@ -33,11 +33,11 @@ func getBaseAddress(addr net.Addr, trimBits int) string {
 		return ""
 	}
 
-	if ip == nil || trimBits < 0 {
+	if ip == nil {
 		return ""
 	}
 
-	mask := net.CIDRMask(len(ip)*8-trimBits, len(ip)*8)
+	mask := net.CIDRMask(len(ip)*8-int(trimBits), len(ip)*8)
 	baseIP := make(net.IP, len(ip))
 	for i := range ip {
 		baseIP[i] = ip[i] & mask[i]

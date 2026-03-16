@@ -10,7 +10,7 @@ import (
 )
 
 // testDNS performs a DNS lookup query
-func testDNS(ctx context.Context, target string, timeoutMs int, qryHost string) Result {
+func testDNS(ctx context.Context, target string, timeoutMs int, qryHost string, customPort string) Result {
 	start := time.Now()
 	var latency time.Duration
 
@@ -27,8 +27,13 @@ func testDNS(ctx context.Context, target string, timeoutMs int, qryHost string) 
 	}
 
 	// Default DNS port is 53
+	// Default NTP port is 123
 	if port == "" {
-		port = "53"
+		if customPort != "" {
+			port = customPort
+		} else {
+			port = "53"
+		}
 	}
 
 	// Create timeout

@@ -28,15 +28,31 @@ make build
 
 ### Arguments
 
-- `-n,--num <number>`: Number of lowest latency replies to return (default: all)
-- `-t <milliseconds>`: Timeout in milliseconds to consider (default: 5000)
-- `-k <kind>`: Test type: 'tcp', 'ntp', or 'dns' (tcp by default, or auto-detect based on hostname)
-- `-b,--bare`: Only print target names in result, one per line (raw output)
-- `-s,--sort`: Sort the list by latency
-- `-r,--reverse`: Reverse the list (useful with sorting the results)
-- `-p,--parallel <number>`: Number of concurrent allowed connections (default: 8)
-- `-V,--version`: Print version and exit
-- `targets`: TCP, NTP, or DNS target URLs (host or host:port)
+```bash
+Usage: ltest [--num NUM] [--timeout TIMEOUT] [--kind KIND] [--bare] [--sort] [--reverse] [--version] [--parallel PARALLEL] [--port PORT] [--filter-subnet FILTER-SUBNET] [--dns-query DNS-QUERY] [TARGETS [TARGETS ...]]
+
+Positional arguments:
+  TARGETS                Host targets to test ("host:port" or "host" if icmp)
+
+Options:
+  --num NUM, -n NUM      Number of latency replies to return [default: all]
+  --timeout TIMEOUT, -t TIMEOUT
+                         Timeout in milliseconds to consider
+  --kind KIND, -k KIND   Test type: 'tcp', 'ntp', 'dns', or 'icmp'
+	Others like 'http', 'https', and 'ssh' will set 'tcp' and the port if not specified [default: tcp]
+  --bare, -b             Only print the targets in the result, one per line
+  --sort, -s             Sort the list by latency
+  --reverse, -r          Reverse the list (useful with sorting the results)
+  --version, -V          Print version and exit
+  --parallel PARALLEL, -P PARALLEL
+                         Number of concurrent allowed connections [default: 8]
+  --port PORT, -p PORT   Custom port to scan (if not specified in the target)
+  --filter-subnet FILTER-SUBNET, -f FILTER-SUBNET
+                         Filter to one result per subnet (8 = /24)
+  --dns-query DNS-QUERY
+                         DNS query to make [default: github.com]
+  --help, -h             display this help and exit
+```
 
 ### Examples
 
