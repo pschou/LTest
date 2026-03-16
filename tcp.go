@@ -1,12 +1,13 @@
 package main
 
 import (
+	"context"
 	"net"
 	"time"
 )
 
 // testTCP tests a TCP target with a SYN-only handshake
-func testTCP(target string, timeoutMs int, defaultPort string) Result {
+func testTCP(ctx context.Context, target string, timeoutMs int, defaultPort string) Result {
 	start := time.Now()
 	var latency time.Duration
 
@@ -36,7 +37,7 @@ func testTCP(target string, timeoutMs int, defaultPort string) Result {
 	}
 
 	// Connect to target
-	conn, err := dialer.Dial("tcp", net.JoinHostPort(host, portStr))
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, portStr))
 	if err != nil {
 		latency = time.Since(start)
 		return Result{

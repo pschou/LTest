@@ -2,12 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"net"
 	"time"
 )
 
 // testNTP performs a full NTP query with time synchronization
-func testNTP(target string, timeoutMs int) Result {
+func testNTP(ctx context.Context, target string, timeoutMs int) Result {
 	start := time.Now()
 
 	var latency time.Duration
@@ -41,7 +42,7 @@ func testNTP(target string, timeoutMs int) Result {
 	}
 
 	// Connect to NTP server
-	conn, err := dialer.Dial("udp", addr)
+	conn, err := dialer.DialContext(ctx, "udp", addr)
 	if err != nil {
 		latency = time.Since(start)
 		return Result{

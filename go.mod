@@ -1,4 +1,4 @@
-module main
+module github.com/pschou/LTest
 
 go 1.24.4
 

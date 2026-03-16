@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -9,13 +10,13 @@ import (
 	"time"
 
 	"github.com/alexflint/go-arg"
-	"github.com/remeh/sizedwaitgroup"
+	"github.com/pschou/LTest/topk"
 )
 
 // Arguments for the CLI tool
 type Args struct {
-	N              int      `arg:"-n,--num" help:"Number of latency replies to return [default: all]"`
-	T              int      `arg:"-t,--timeout" help:"Timeout in milliseconds to consider"`
+	Num            int      `arg:"-n,--num" help:"Number of latency replies to return [default: all]"`
+	Timeout        int      `arg:"-t,--timeout" help:"Timeout in milliseconds to consider"`
 	Kind           string   `arg:"-k,--kind" help:"Test type: 'tcp', 'ntp', 'dns', or 'icmp'" default:"tcp"`
 	Bare           bool     `arg:"-b,--bare" help:"Only print the targets in the result, one per line"`
 	Targets        []string `arg:"positional" help:"TCP or NTP targets to test"`
@@ -57,11 +58,11 @@ func main() {
 	}
 
 	// Set defaults
-	if args.N <= 0 {
-		args.N = len(args.Targets) // not specified
+	if args.Num <= 0 {
+		args.Num = len(args.Targets) // not specified
 	}
-	if args.T <= 0 {
-		args.T = 5000 // 5 seconds default
+	if args.Timeout <= 0 {
+		args.Timeout = 5000 // 5 seconds default
 	}
 
 	if args.Parallel <= 0 {
@@ -80,31 +81,45 @@ func main() {
 	// Collect data
 	go func() {
 		defer close(results)
+
+		var dedup = make(map[string]struct{})
+
 		// Allow only concurrent routines
-		swg := sizedwaitgroup.New(args.Parallel)
+		tk := topk.New(context.Background(), args.Parallel, args.Num,
+			time.Duration(args.Timeout)*time.Millisecond*2+time.Second)
 		for i, target := range args.Targets {
-			swg.Add()
+			ctx, Done := tk.Add()
+
 			go func(i int) {
-				defer swg.Done()
 				var result Result
 
 				switch args.Kind {
 				case "tcp", "":
-					result = testTCP(target, args.T, fmt.Sprintf("%d", args.TCPDefaultPort))
+					result = testTCP(ctx, target, args.Timeout, fmt.Sprintf("%d", args.TCPDefaultPort))
 				case "ntp":
-					result = testNTP(target, args.T)
+					result = testNTP(ctx, target, args.Timeout)
 				case "dns":
-					result = testDNS(target, args.T, args.DNSQuery)
+					result = testDNS(ctx, target, args.Timeout, args.DNSQuery)
 				case "icmp", "ping":
-					result = testICMP(target, args.T)
+					result = testICMP(ctx, target, args.Timeout)
 				default:
 					panic("unsupported protocol: " + args.Kind)
+				}
+
+				baseAddr := getBaseAddress(result.IP, args.FilterSubnet)
+				if _, ok := dedup[baseAddr]; !ok && result.Success {
+					if args.FilterSubnet >= 0 && baseAddr != "" {
+						dedup[baseAddr] = struct{}{}
+					}
+					Done(true)
+				} else {
+					Done(result.Success)
 				}
 
 				results <- &result
 			}(i)
 		}
-		swg.Wait()
+		tk.Wait()
 	}()
 
 	if args.Sort {
@@ -137,13 +152,13 @@ func main() {
 	if args.Bare {
 		i := 0
 		for r := range printer {
-			if i == args.N {
+			if i == args.Num {
 				break
 			}
 			if r.Success {
 				baseAddr := getBaseAddress(r.IP, args.FilterSubnet)
 				if _, ok := dedup[baseAddr]; !ok {
-					if args.FilterSubnet >= 0 {
+					if args.FilterSubnet >= 0 && baseAddr != "" {
 						dedup[baseAddr] = struct{}{}
 					}
 					i++
@@ -159,18 +174,18 @@ func main() {
 
 		i := 0
 		for r := range printer {
-			if i == args.N {
+			if i == args.Num {
 				fmt.Printf("│ %-25s │ %-8s │ %-9s │ %-7s │ % 19d more results omitted │\n",
 					"",
 					"",
 					"",
 					"",
-					len(args.Targets)-args.N)
+					len(args.Targets)-args.Num)
 				break
 			}
 			baseAddr := getBaseAddress(r.IP, args.FilterSubnet)
 			if _, ok := dedup[baseAddr]; !ok {
-				if args.FilterSubnet >= 0 {
+				if args.FilterSubnet >= 0 && baseAddr != "" {
 					dedup[baseAddr] = struct{}{}
 				}
 				i++

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"time"
@@ -9,7 +10,7 @@ import (
 )
 
 // testDNS performs a DNS lookup query
-func testDNS(target string, timeoutMs int, qryHost string) Result {
+func testDNS(ctx context.Context, target string, timeoutMs int, qryHost string) Result {
 	start := time.Now()
 	var latency time.Duration
 
@@ -46,7 +47,7 @@ func testDNS(target string, timeoutMs int, qryHost string) Result {
 	msg.RecursionDesired = true
 
 	// Send DNS request and receive response
-	r, _, err := client.Exchange(msg, addr)
+	conn, err := client.DialContext(ctx, addr)
 	if err != nil {
 		latency = time.Since(start)
 		return Result{
@@ -57,8 +58,20 @@ func testDNS(target string, timeoutMs int, qryHost string) Result {
 			Message:  err.Error(),
 		}
 	}
+	defer conn.Close()
 
+	r, _, err := client.ExchangeWithConnContext(ctx, msg, conn)
 	latency = time.Since(start)
+
+	if err != nil {
+		return Result{
+			Target:   target,
+			Protocol: "DNS",
+			Latency:  latency,
+			Success:  false,
+			Message:  err.Error(),
+		}
+	}
 
 	// Check if we got any answers
 	if len(r.Answer) == 0 {
@@ -97,7 +110,7 @@ func testDNS(target string, timeoutMs int, qryHost string) Result {
 		Protocol: "DNS",
 		Latency:  latency,
 		Success:  true,
-		IP:       &net.UDPAddr{IP: net.ParseIP(firstIP), Port: 53},
+		IP:       conn.RemoteAddr(),
 		Message:  fmt.Sprintf("DNS lookup successful, found %d IP(s)", len(r.Answer)),
 	}
 }

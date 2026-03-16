@@ -1,14 +1,14 @@
 package main
 
 import (
-	"net"
+	"context"
 	"time"
 
 	ping "github.com/prometheus-community/pro-bing"
 )
 
 // testICMP performs a simpler ICMP ping without privileged mode
-func testICMP(target string, timeoutMs int) Result {
+func testICMP(ctx context.Context, target string, timeoutMs int) Result {
 	start := time.Now()
 	var latency time.Duration
 
@@ -43,7 +43,7 @@ func testICMP(target string, timeoutMs int) Result {
 	pinger.SetPrivileged(false) // Use non-privileged mode
 
 	// Run the ping
-	err = pinger.Run()
+	err = pinger.RunWithContext(ctx)
 	if err != nil {
 		latency = time.Since(start)
 		return Result{
@@ -76,7 +76,7 @@ func testICMP(target string, timeoutMs int) Result {
 		Protocol: "ICMP",
 		Latency:  latency,
 		Success:  true,
-		IP:       &net.IPAddr{IP: net.ParseIP(host)},
+		IP:       pinger.IPAddr(),
 		Message:  "ICMP echo successful",
 	}
 }
