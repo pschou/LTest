@@ -97,21 +97,20 @@ Options:
 
 ### Default (Table)
 ```
-Results:
-┌──────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ Target                    │ Protocol │  Latency │ Success │ Details                                  │
-├──────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ ntp.example.net:80        │ TCP      │  45.23ms │ true    │ NTP query completed                      │
-│ google.com:80             │ TCP      │ 123.45ms │ true    │ SYN sent and acknowledged                 │
-│ time.google.com:80        │ TCP      │ 156.78ms │ true    │ NTP query completed                      │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+$ ./ltest google.com:80 github.com:80
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Target                    │ Protocol │  Latency  │ Success │ Details                                  │
+├───────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ github.com:80             │ TCP      │ 25.38ms   │ true    │ SYN sent and acknowledged                │
+│ google.com:80             │ TCP      │ 29.73ms   │ true    │ SYN sent and acknowledged                │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Bare (One per line)
 ```
-ntp.example.net:80
+$ ./ltest -b google.com:80 github.com:80
 google.com:80
-time.google.com:80
+github.com:80
 ```
 
 ## Protocol Details
@@ -135,6 +134,9 @@ time.google.com:80
 ### ICMP
 - Sends two ICMP echo requests to each target
 - Measures the round trip times and keeps the shortest
+
+### Other protocols
+- Other protocols are supported as long as they are TCP and are listed in /etc/services
 
 ## Building
 

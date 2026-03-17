@@ -73,7 +73,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Latency Tester: Invalid port specification for ICMP")
 			os.Exit(1)
 		}
-	case "tcp", "", "ntp", "dns":
+	case "tcp", "ntp", "dns":
 	default:
 		tcpPort := getServicePort(args.Kind)
 		if n, err := strconv.ParseUint(tcpPort, 10, 16); n > 0 && err == nil {
@@ -135,7 +135,7 @@ func main() {
 				var result Result
 
 				switch args.Kind {
-				case "tcp", "":
+				case "tcp":
 					result = testTCP(ctx, target, args.Timeout, customPort)
 				case "ntp":
 					result = testNTP(ctx, target, args.Timeout, customPort)
