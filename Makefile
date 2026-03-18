@@ -7,7 +7,8 @@ FLAGS := "-s -w -X main.version=${VERSION}"
 
 # Build the application
 build:
-	go build -ldflags=${FLAGS} -o $(BINARY_NAME) .
+	docker image inspect builder &>/dev/null || docker build -t builder .
+	docker run -it --rm -v .:/app builder go build -v -ldflags=${FLAGS} -o $(BINARY_NAME) .
 
 # Build for multiple platforms
 build-all:
