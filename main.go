@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"sort"
@@ -21,6 +23,7 @@ type Args struct {
 	Timeout      int      `arg:"-t,--timeout" help:"Timeout in milliseconds to consider"`
 	Kind         string   `arg:"-k,--kind" help:"Protocol: tcp, ntp, dns, icmp, or #/tcp in /etc/services" default:"tcp"`
 	Bare         bool     `arg:"-b,--bare" help:"Only print the targets in the result, one per line"`
+	JSON         bool     `arg:"-j,--json" help:"Print the results in JSON for external parsing"`
 	Targets      []string `arg:"positional" help:"Host targets to test (\"host:port\" or \"host\" if icmp)"`
 	Sort         bool     `arg:"-s,--sort" help:"Sort the list by latency"`
 	Reverse      bool     `arg:"-r,--reverse" help:"Reverse the list (useful with sorting the results)"`
@@ -93,7 +96,10 @@ func main() {
 	}
 
 	if len(args.Targets) == 0 {
-		if !args.Bare {
+		if args.Bare {
+		} else if args.JSON {
+			fmt.Println("[]")
+		} else {
 			fmt.Fprintln(os.Stderr, "Latency Tester: No targets specified")
 			os.Exit(1)
 		}
@@ -119,6 +125,8 @@ func main() {
 		}()
 
 		var shrinktTimeoutWindowIPFilter = make(map[string]struct{})
+		var shrinktTimeoutWindowIPMutex sync.Mutex
+
 		var customPort string
 		if args.CustomPort != nil {
 			customPort = fmt.Sprintf("%d", *args.CustomPort)
@@ -130,8 +138,7 @@ func main() {
 
 		for i, target := range args.Targets {
 			ctx, Done := tk.Add()
-
-			go func(i int) {
+			go func(i int, ctx context.Context, done topk.DoneFunc) {
 				var result Result
 
 				switch args.Kind {
@@ -142,29 +149,34 @@ func main() {
 				case "dns":
 					result = testDNS(ctx, target, args.Timeout, args.DNSQuery, customPort)
 				case "icmp", "ping":
+					if host, port, err := net.SplitHostPort(target); err == nil && port != "" {
+						target = host
+					}
 					result = testICMP(ctx, target, args.Timeout)
 				}
 
 				if args.FilterSubnet != nil {
 					baseAddr := getBaseAddress(result.IP, *args.FilterSubnet)
+					shrinktTimeoutWindowIPMutex.Lock()
 					if _, ok := shrinktTimeoutWindowIPFilter[baseAddr]; !ok && result.Success {
 						if baseAddr != "" {
 							shrinktTimeoutWindowIPFilter[baseAddr] = struct{}{}
 						}
-						Done(true)
+						done(true)
 					} else {
-						Done(false) // Ignore second hits in the filtering efforts, as we don't want to shrink the timeout window too soon.
+						done(false) // Ignore second hits in the filtering efforts, as we don't want to shrink the timeout window too soon.
 					}
+					shrinktTimeoutWindowIPMutex.Unlock()
 				} else {
-					Done(result.Success)
+					done(result.Success)
 				}
 
 				chanLock.Lock()
-				defer chanLock.Unlock()
 				if !chanClosed {
 					results <- &result
 				}
-			}(i)
+				chanLock.Unlock()
+			}(i, ctx, Done)
 		}
 		tk.Wait()
 	}()
@@ -223,27 +235,60 @@ func main() {
 				break
 			}
 		}
+	} else if args.JSON {
+		fmt.Printf("[")
+		var i, j int
+
+		for r := range printer {
+			if r.Success {
+				if toPrint(r) {
+					i++
+				}
+			}
+			j++
+			if j > 1 {
+				fmt.Printf(",\n")
+			}
+			dat, _ := json.Marshal(r)
+			fmt.Printf("%s", string(dat))
+
+			if i == int(args.Num) {
+				cancel()
+				break
+			}
+		}
+		fmt.Println("]")
 	} else {
 		// Print results
-		fmt.Println("┌───────────────────────────────────────────────────────────────────────────────────────────────────────┐")
-		fmt.Println("│ Target                    │ Protocol │  Latency  │ Success │ Details                                  │")
-		fmt.Println("├───────────────────────────────────────────────────────────────────────────────────────────────────────┤")
+		maxLength := 6
+		for _, t := range args.Targets {
+			if len(t) > maxLength {
+				maxLength = len(t)
+			}
+		}
+		maxLengthStr := strconv.Itoa(maxLength)
 
-		i := 0
+		fmt.Println("┌─" + dash(maxLength) + "─────────────────────────────────────────────────────────────────────────────┐")
+		fmt.Printf("│ %-"+maxLengthStr+"s │ Protocol │  Latency  │ Success │ Details                                  │\n", "Target")
+		fmt.Println("├─" + dash(maxLength) + "─────────────────────────────────────────────────────────────────────────────┤")
+
+		var i, j int
 		for r := range printer {
-
 			if toPrint(r) {
 				i++
-				fmt.Printf("│ %-25s │ %-8s │ %-9s │ %-7s │ %-40s │\n",
+				if r.Success {
+					j++
+				}
+				fmt.Printf("│ %-"+maxLengthStr+"s │ %-8s │ %-9s │ %-7s │ %-40s │\n",
 					r.Target,
 					r.Protocol,
-					fmt.Sprintf("%3.2fms", r.Latency.Seconds()*1000),
+					FormatDuration(r.Latency.Seconds()),
 					fmt.Sprintf("%v", r.Success),
 					strings.ReplaceAll(r.Message, r.Target, ""))
 			}
-			if i == int(args.Num) && len(args.Targets) > i {
+			if j == int(args.Num) && len(args.Targets) > i {
 				cancel()
-				fmt.Printf("│ %-25s │ %-8s │ %-9s │ %-7s │ % 19d more results omitted │\n",
+				fmt.Printf("│ %-"+maxLengthStr+"s │ %-8s │ %-9s │ %-7s │ % 19d more results omitted │\n",
 					"",
 					"",
 					"",
@@ -253,8 +298,15 @@ func main() {
 			}
 		}
 
-		fmt.Println("└───────────────────────────────────────────────────────────────────────────────────────────────────────┘")
+		fmt.Println("└─" + dash(maxLength) + "─────────────────────────────────────────────────────────────────────────────┘")
 	}
+}
+
+func dash(n int) (s string) {
+	for ; n > 0; n-- {
+		s = s + "─"
+	}
+	return
 }
 
 // Result represents a single latency test result
@@ -265,4 +317,29 @@ type Result struct {
 	Success  bool
 	Message  string
 	IP       net.Addr
+}
+
+// FormatDuration formats a given duration to a string with a minimum precision of 0.01 ms
+func FormatDuration(duration float64) string {
+	// Define units and their corresponding values
+	units := []struct {
+		value  float64
+		suffix string
+	}{
+		{3600, "h"},
+		{60, "m"},
+		{1, "s"},
+		//{0.001, "ms"},
+	}
+
+	// Find the most suitable unit
+	for _, unit := range units {
+		if math.Abs(duration) >= unit.value {
+			// Format the duration to 6 significant digits
+			return fmt.Sprintf("%6.6g%s", duration/unit.value, unit.suffix)
+		}
+	}
+
+	// If the duration is very small, display it in ms with 6 significant digits
+	return fmt.Sprintf("%0.2fms", duration*1000)
 }

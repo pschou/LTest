@@ -10,7 +10,6 @@ import (
 type TopK struct {
 	size, keep int
 	timeout    time.Duration
-	earlyWipe  time.Time
 
 	workers *worker
 	kept    *worker
@@ -18,16 +17,20 @@ type TopK struct {
 
 	ctx     context.Context
 	cancel  context.CancelFunc
+	reaper  sync.Once
 	current chan struct{}
 	wg      sync.WaitGroup
 }
 
 type worker struct {
 	cancel context.CancelFunc
+	done   func()
 	st     time.Time
 	d      time.Duration
 	next   *worker
 }
+
+type DoneFunc func(Success bool)
 
 // New creates a TopK group
 // The limit parameter is the maximum amount of
@@ -63,16 +66,17 @@ func New(ctx context.Context, limit, keep int, timeout time.Duration) *TopK {
 // been called.
 //
 // See sync.WaitGroup documentation for more information.
-func (s *TopK) Add() (ctx context.Context, Done func(success bool)) {
+func (s *TopK) Add() (context.Context, DoneFunc) {
 	select {
 	case <-s.ctx.Done():
-		return ctx, func(bool) {} // Context has been cancelled
+		return s.ctx, func(bool) {} // Context has been cancelled
 	case s.current <- struct{}{}:
 		break // When there is a slot available, proceed
 	}
 
 	cctx, cancel := context.WithTimeout(s.ctx, s.timeout)
-	w := &worker{cancel: cancel, st: time.Now()}
+	s.wg.Add(1)
+	w := &worker{cancel: cancel, st: time.Now(), done: sync.OnceFunc(func() { s.wg.Add(-1) })}
 
 	// Go to the end and add as last element
 	current := s.workers
@@ -80,8 +84,6 @@ func (s *TopK) Add() (ctx context.Context, Done func(success bool)) {
 		current = current.next
 	}
 	current.next, w.next = w, current.next
-
-	s.wg.Add(1)
 
 	return cctx, func(success bool) {
 		w.d = time.Since(w.st)
@@ -117,12 +119,34 @@ func (s *TopK) Add() (ctx context.Context, Done func(success bool)) {
 				if cur.next != nil {
 					cur.next = nil // Truncate
 				}
-				s.cleanup()
+				s.reaper.Do(func() {
+					// Infinite for loop which reaps long lived processes until the context is cancelled.
+					go func() {
+						for {
+							select {
+							case <-s.ctx.Done(): // Once cancelled, no more need to clean up.
+								for cur := s.workers.next; cur != nil; cur = cur.next {
+									if time.Since(cur.st) > s.timeout {
+										cur.done() // Unblock everything
+									}
+								}
+								return
+							default:
+								for cur := s.workers.next; cur != nil; cur = cur.next {
+									if time.Since(cur.st) > s.timeout {
+										cur.cancel() // Cancel anything too slow
+									}
+								}
+								time.Sleep(time.Second / 10)
+							}
+						}
+					}()
+				})
 			}
 		}
 
+		w.done()
 		<-s.current // Release the next job.
-		s.wg.Done() // Decrement the waitgroup for wait to work.
 	}
 }
 
@@ -131,17 +155,4 @@ func (s *TopK) Add() (ctx context.Context, Done func(success bool)) {
 func (s *TopK) Wait() {
 	s.wg.Wait()
 	s.cancel()
-}
-
-// Cancel any ongoing jobs beyond deadline
-func (s *TopK) cleanup() {
-	if time.Since(s.earlyWipe) < s.timeout/2 {
-		return
-	}
-	s.earlyWipe = time.Now()
-	for cur := s.workers.next; cur != nil; cur = cur.next {
-		if time.Since(cur.st) > s.timeout {
-			cur.cancel()
-		}
-	}
 }

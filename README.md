@@ -97,13 +97,40 @@ Options:
 
 ### Default (Table)
 ```
-$ ./ltest google.com:80 github.com:80
-┌───────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ Target                    │ Protocol │  Latency  │ Success │ Details                                  │
-├───────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ github.com:80             │ TCP      │ 25.38ms   │ true    │ SYN sent and acknowledged                │
-│ google.com:80             │ TCP      │ 29.73ms   │ true    │ SYN sent and acknowledged                │
-└───────────────────────────────────────────────────────────────────────────────────────────────────────┘
+$ ltest -p 443 gitlab.com github.com yahoo.com altavista.com nasa.gov time.gov
+┌───────────────────────────────────────────────────────────────────────────────────────────┐
+│ Target        │ Protocol │  Latency  │ Success │ Details                                  │
+├───────────────────────────────────────────────────────────────────────────────────────────┤
+│ gitlab.com    │ TCP      │ 30.71ms   │ true    │ SYN sent and acknowledged                │
+│ github.com    │ TCP      │ 30.69ms   │ true    │ SYN sent and acknowledged                │
+│ nasa.gov      │ TCP      │ 30.78ms   │ true    │ SYN sent and acknowledged                │
+│ altavista.com │ TCP      │ 30.39ms   │ true    │ SYN sent and acknowledged                │
+│ yahoo.com     │ TCP      │ 38.38ms   │ true    │ SYN sent and acknowledged                │
+│ time.gov      │ TCP      │ 69.27ms   │ true    │ SYN sent and acknowledged                │
+└───────────────────────────────────────────────────────────────────────────────────────────┘
+
+$ ltest -k icmp gitlab.com github.com yahoo.com altavista.com nasa.gov time.gov
+┌───────────────────────────────────────────────────────────────────────────────────────────┐
+│ Target        │ Protocol │  Latency  │ Success │ Details                                  │
+├───────────────────────────────────────────────────────────────────────────────────────────┤
+│ github.com    │ ICMP     │ 4.16ms    │ true    │ ICMP echo successful                     │
+│ gitlab.com    │ ICMP     │ 3.28ms    │ true    │ ICMP echo successful                     │
+│ yahoo.com     │ ICMP     │ 12.39ms   │ true    │ ICMP echo successful                     │
+│ altavista.com │ ICMP     │ 3.59ms    │ true    │ ICMP echo successful                     │
+│ nasa.gov      │ ICMP     │ 3.22ms    │ true    │ ICMP echo successful                     │
+│ time.gov      │ ICMP     │ 5.06236s  │ false   │ no packets received                      │
+└───────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### JSON
+```
+$ ltest -j -k icmp gitlab.com github.com yahoo.com altavista.com nasa.gov time.gov
+[{"Target":"github.com","Protocol":"ICMP","Latency":4193751,"Success":true,"Message":"ICMP echo successful","IP":{"IP":"140.82.112.4","Zone":""}},
+{"Target":"yahoo.com","Protocol":"ICMP","Latency":13091938,"Success":true,"Message":"ICMP echo successful","IP":{"IP":"74.6.143.25","Zone":""}},
+{"Target":"altavista.com","Protocol":"ICMP","Latency":3022756,"Success":true,"Message":"ICMP echo successful","IP":{"IP":"76.223.84.192","Zone":""}},
+{"Target":"nasa.gov","Protocol":"ICMP","Latency":4134529,"Success":true,"Message":"ICMP echo successful","IP":{"IP":"192.0.66.108","Zone":""}},
+{"Target":"gitlab.com","Protocol":"ICMP","Latency":3561454,"Success":true,"Message":"ICMP echo successful","IP":{"IP":"172.65.251.78","Zone":""}},
+{"Target":"time.gov","Protocol":"ICMP","Latency":5073435931,"Success":false,"Message":"no packets received","IP":null}]
 ```
 
 ### Bare (One per line)

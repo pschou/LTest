@@ -10,7 +10,6 @@ import (
 // testICMP performs a simpler ICMP ping without privileged mode
 func testICMP(ctx context.Context, target string, timeoutMs int) Result {
 	start := time.Now()
-	var latency time.Duration
 
 	// Parse host and port
 	host, port, err := parseTarget(target)
@@ -29,7 +28,13 @@ func testICMP(ctx context.Context, target string, timeoutMs int) Result {
 	// Try using the ping library with non-privileged mode
 	pinger, err := ping.NewPinger(host)
 	if err != nil {
-		panic(err)
+		return Result{
+			Target:   target,
+			Protocol: "ICMP",
+			Latency:  time.Since(start),
+			Success:  false,
+			Message:  err.Error(),
+		}
 	}
 	pinger.Timeout = time.Duration(timeoutMs) * time.Millisecond
 	pinger.Count = 2
@@ -45,11 +50,10 @@ func testICMP(ctx context.Context, target string, timeoutMs int) Result {
 	// Run the ping
 	err = pinger.RunWithContext(ctx)
 	if err != nil {
-		latency = time.Since(start)
 		return Result{
 			Target:   target,
 			Protocol: "ICMP",
-			Latency:  latency,
+			Latency:  time.Since(start),
 			Success:  false,
 			Message:  err.Error(),
 		}
@@ -58,14 +62,11 @@ func testICMP(ctx context.Context, target string, timeoutMs int) Result {
 	// Get statistics
 	statistics := pinger.Statistics()
 
-	if statistics.PacketsRecv > 0 {
-		latency = statistics.MinRtt
-	} else {
-		latency = time.Since(start)
+	if statistics.PacketsRecv == 0 {
 		return Result{
 			Target:   target,
 			Protocol: "ICMP",
-			Latency:  latency,
+			Latency:  time.Since(start),
 			Success:  false,
 			Message:  "no packets received",
 		}
@@ -74,7 +75,7 @@ func testICMP(ctx context.Context, target string, timeoutMs int) Result {
 	return Result{
 		Target:   target,
 		Protocol: "ICMP",
-		Latency:  latency,
+		Latency:  statistics.MinRtt,
 		Success:  true,
 		IP:       pinger.IPAddr(),
 		Message:  "ICMP echo successful",
