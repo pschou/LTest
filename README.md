@@ -123,6 +123,7 @@ $ ltest -k icmp gitlab.com github.com yahoo.com altavista.com nasa.gov time.gov
 ```
 
 ### JSON
+Simple ping test with multiple endpoints
 ```
 $ ltest -j -k icmp gitlab.com github.com yahoo.com altavista.com nasa.gov time.gov
 [{"Target":"github.com","Protocol":"ICMP","Latency":4193751,"Success":true,"Message":"ICMP echo successful","IP":{"IP":"140.82.112.4","Zone":""}},
@@ -131,6 +132,13 @@ $ ltest -j -k icmp gitlab.com github.com yahoo.com altavista.com nasa.gov time.g
 {"Target":"nasa.gov","Protocol":"ICMP","Latency":4134529,"Success":true,"Message":"ICMP echo successful","IP":{"IP":"192.0.66.108","Zone":""}},
 {"Target":"gitlab.com","Protocol":"ICMP","Latency":3561454,"Success":true,"Message":"ICMP echo successful","IP":{"IP":"172.65.251.78","Zone":""}},
 {"Target":"time.gov","Protocol":"ICMP","Latency":5073435931,"Success":false,"Message":"no packets received","IP":null}]
+```
+
+Sorted query against ntp servers for finding the closest 5 by using either an NTP query or a TCP threeway handshake:
+```
+$ ltest -j -s -n 5 -k ntp $( cat list )
+
+$ ltest -j -s -n 5 -p 80 $( cat list )
 ```
 
 ### Bare (One per line)
